@@ -1,0 +1,8 @@
+{
+  "name": "med-tracker-notify",
+  "private": true,
+  "version": "1.0.0",
+  "dependencies": {
+    "firebase-admin": "^12.7.0"
+  }
+}

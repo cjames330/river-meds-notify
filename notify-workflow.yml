@@ -1,0 +1,37 @@
+name: Medication notifications
+
+on:
+  schedule:
+    # Every five minutes. GitHub runs these late under load, which is why the
+    # job looks ahead 20 minutes rather than firing exactly on the hour.
+    - cron: "*/5 * * * *"
+  workflow_dispatch:        # lets you run it by hand from the Actions tab
+
+concurrency:
+  group: notify
+  cancel-in-progress: false
+
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: notify/package.json
+
+      - run: npm install --no-audit --no-fund
+        working-directory: notify
+
+      - run: node send.js
+        working-directory: notify
+        env:
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+          HOUSE_CODE: ${{ secrets.HOUSE_CODE }}
+          HOUSE_TZ: America/New_York
+          LEAD_MINUTES: 20
+          GRACE_MINUTES: 30
