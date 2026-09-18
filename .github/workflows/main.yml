@@ -2,8 +2,10 @@ name: Medication notifications
 
 on:
   schedule:
+    # Every five minutes. GitHub runs these late under load, which is why the
+    # job looks ahead 20 minutes rather than firing exactly on the hour.
     - cron: "*/5 * * * *"
-  workflow_dispatch:
+  workflow_dispatch:        # lets you run it by hand from the Actions tab
 
 concurrency:
   group: notify
@@ -30,6 +32,9 @@ jobs:
         env:
           FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
           HOUSE_CODE: ${{ secrets.HOUSE_CODE }}
+          VAPID_PUBLIC: ${{ secrets.VAPID_PUBLIC }}
+          VAPID_PRIVATE: ${{ secrets.VAPID_PRIVATE }}
+          VAPID_SUBJECT: mailto:river@example.com
           HOUSE_TZ: America/New_York
           LEAD_MINUTES: 20
           GRACE_MINUTES: 30
