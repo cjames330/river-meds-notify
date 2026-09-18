@@ -6,6 +6,7 @@
 process.env.TZ = process.env.HOUSE_TZ || "America/New_York";
 
 const admin = require("firebase-admin");
+const webpush = require("web-push");
 
 const SPACE = process.env.HOUSE_CODE;
 const LEAD_MIN = Number(process.env.LEAD_MINUTES || 20);   // how far ahead "coming up" fires
@@ -20,6 +21,14 @@ if (!SPACE) { console.error("HOUSE_CODE is not set"); process.exit(1); }
 admin.initializeApp({
   credential: admin.credential.cert(JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT))
 });
+
+/* Standards-based Web Push, signed with the VAPID pair. Nothing here touches
+   Firebase Messaging — the phones subscribed through their own browser. */
+webpush.setVapidDetails(
+  process.env.VAPID_SUBJECT || "mailto:nobody@example.com",
+  process.env.VAPID_PUBLIC,
+  process.env.VAPID_PRIVATE
+);
 const db = admin.firestore();
 const base = `spaces/${SPACE}`;
 
@@ -60,7 +69,7 @@ async function claim(id) {
 }
 
 function wants(dev, type, itemKey) {
-  if (!dev.enabled || !dev.token) return false;
+  if (!dev.enabled || !dev.push || !dev.push.endpoint) return false;
   if (!(dev.types || {})[type]) return false;
   if (dev.items === "all" || dev.items === undefined) return true;
   return Array.isArray(dev.items) && dev.items.includes(itemKey);
@@ -68,23 +77,29 @@ function wants(dev, type, itemKey) {
 
 async function send(devices, title, body, tag) {
   if (!devices.length) return;
-  const tokens = devices.map(d => d.token);
-  const res = await admin.messaging().sendEachForMulticast({
-    tokens,
-    data: {title, body, tag: tag || "", url: "/"},
-    webpush: {headers: {Urgency: "high"}, fcmOptions: {link: "/"}}
-  });
-  console.log(`  -> ${title} | ${body} | ${res.successCount}/${tokens.length} delivered`);
+  const payload = JSON.stringify({title, body, tag: tag || "", url: "/"});
+  let ok = 0;
 
-  // Drop phones that have uninstalled or reset — their tokens are dead for good.
-  res.responses.forEach((r, i) => {
-    const code = r.error && r.error.code;
-    if (code === "messaging/registration-token-not-registered" ||
-        code === "messaging/invalid-argument") {
-      console.log(`     removing dead token for ${devices[i].name}`);
-      db.doc(`${base}/devices/${devices[i].id}`).delete().catch(() => {});
+  for (const dev of devices) {
+    const sub = {
+      endpoint: dev.push.endpoint,
+      keys: {p256dh: dev.push.p256dh, auth: dev.push.auth}
+    };
+    try {
+      await webpush.sendNotification(sub, payload, {TTL: 1800, urgency: "high"});
+      ok++;
+    } catch (err) {
+      const code = err && err.statusCode;
+      console.log(`     ${dev.name}: push failed (${code || err.message})`);
+      // 404/410 mean the subscription is gone for good — the phone uninstalled
+      // the app or reset it. Anything else is worth retrying next run.
+      if (code === 404 || code === 410) {
+        console.log(`     removing dead subscription for ${dev.name}`);
+        await db.doc(`${base}/devices/${dev.id}`).delete().catch(() => {});
+      }
     }
-  });
+  }
+  console.log(`  -> ${title} | ${body} | ${ok}/${devices.length} delivered`);
 }
 
 async function main() {
